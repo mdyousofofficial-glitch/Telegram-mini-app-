@@ -1,0 +1,244 @@
+<?php
+// ==================== ১. আপনার কনফিগারেশন ====================
+$botToken = "YOUR_BOT_TOKEN"; // আপনার Bot Token দিন
+$channelUsername = "@FB_INSTA_MARKETING092"; // @ সহ আপনার চ্যানেলের ইউজারনেম দিন
+$referBonus = 2.00; // প্রতি রেফারে বোনাস (টাকা)
+$minWithdraw = 20.00; // সর্বনিম্ন উইথড্র (টাকা)
+// ============================================================
+
+$apiUrl = "https://api.telegram.org/bot" . $botToken;
+
+// Telegram Webhook Input গ্রহণ
+$input = file_get_contents('php://input');
+$update = json_decode($input, TRUE);
+
+// ১. চ্যানেল জয়েন চেক করার ফাংশন
+function isUserSubscribed($apiUrl, $channelUsername, $userId) {
+    $url = $apiUrl . "/getChatMember?chat_id=" . $channelUsername . "&user_id=" . $userId;
+    $response = @file_get_contents($url);
+    $result = json_decode($response, true);
+
+    if ($result && isset($result['ok']) && $result['ok']) {
+        $status = $result['result']['status'];
+        return in_array($status, ['member', 'administrator', 'creator']);
+    }
+    return false;
+}
+
+// ২. Telegram Bot Message Handling
+if ($update) {
+    if (isset($update['message'])) {
+        $chatId = $update['message']['chat']['id'];
+        $userId = $update['message']['from']['id'];
+        $text = $update['message']['text'] ?? '';
+    } elseif (isset($update['callback_query'])) {
+        $chatId = $update['callback_query']['message']['chat']['id'];
+        $userId = $update['callback_query']['from']['id'];
+        $callbackData = $update['callback_query']['data'];
+    }
+
+    if (isset($text) && strpos($text, '/start') === 0) {
+        // রেফার আইডি এক্সট্র্যাক্ট করা
+        $param = trim(str_replace('/start', '', $text));
+        
+        $isJoined = isUserSubscribed($apiUrl, $channelUsername, $userId);
+
+        if ($isJoined) {
+            sendMiniAppButton($apiUrl, $chatId, "✅ আপনার একাউন্ট ভেরিফাইড! নিচের বাটনে ক্লিক করে Mini App চালু করুন।");
+        } else {
+            sendForceJoinMessage($apiUrl, $chatId, $channelUsername);
+        }
+        exit;
+    }
+
+    if (isset($callbackData) && $callbackData === 'check_subscription') {
+        file_get_contents($apiUrl . "/answerCallbackQuery?callback_query_id=" . $update['callback_query']['id']);
+        
+        $isJoined = isUserSubscribed($apiUrl, $channelUsername, $userId);
+        if ($isJoined) {
+            sendMiniAppButton($apiUrl, $chatId, "🎉 ধন্যবাদ! জয়েনিং সফল হয়েছে। এখন আপনি Mini App ব্যবহার করতে পারবেন।");
+        } else {
+            sendForceJoinMessage($apiUrl, $chatId, $channelUsername, "⚠️ আপনি এখনও চ্যানেলে জয়েন করেননি! দয়া করে আগে জয়েন করুন।");
+        }
+        exit;
+    }
+}
+
+// মেসেজ পাঠানোর হেল্পার ফাংশনসমূহ
+function sendForceJoinMessage($apiUrl, $chatId, $channelUsername, $customMsg = "") {
+    $cleanUsername = str_replace('@', '', $channelUsername);
+    $msg = $customMsg ? $customMsg : "⚠️ **বিজ্ঞপ্তি:** বটের মিনি অ্যাপ ব্যবহারের আগে আমাদের অফিসিয়াল চ্যানেলে জয়েন করা বাধ্যতামূলক।";
+    
+    $keyboard = [
+        'inline_keyboard' => [
+            [['text' => '📢 Join Channel', 'url' => 'https://t.me/' . $cleanUsername]],
+            [['text' => '✅ Verify / Check', 'callback_data' => 'check_subscription']]
+        ]
+    ];
+    sendMessage($apiUrl, $chatId, $msg, $keyboard);
+}
+
+function sendMiniAppButton($apiUrl, $chatId, $text) {
+    // এই ওয়েবসাইটের বর্তমান URL অটোমেটিক ডিটেক্ট করবে
+    $actualLink = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
+    
+    $keyboard = [
+        'inline_keyboard' => [
+            [['text' => '🚀 Open Mini App', 'web_app' => ['url' => $actualLink]]]
+        ]
+    ];
+    sendMessage($apiUrl, $chatId, $text, $keyboard);
+}
+
+function sendMessage($apiUrl, $chatId, $text, $keyboard = null) {
+    $data = [
+        'chat_id' => $chatId,
+        'text' => $text,
+        'parse_mode' => 'Markdown'
+    ];
+    if ($keyboard) {
+        $data['reply_markup'] = json_encode($keyboard);
+    }
+    
+    $options = [
+        'http' => [
+            'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
+            'method'  => 'POST',
+            'content' => http_build_query($data)
+        ]
+    ];
+    $context = stream_context_create($options);
+    @file_get_contents($apiUrl . "/sendMessage", false, $context);
+}
+?>
+
+<!-- ==================== ৩. Mini App UI (HTML & JS) ==================== -->
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task & Refer Earn Mini App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--tg-theme-bg-color, #121824);
+            color: var(--tg-theme-text-color, #ffffff);
+            margin: 0;
+            padding: 16px;
+            text-align: center;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.07);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .balance-title { font-size: 14px; color: #aaa; }
+        .balance-amount { font-size: 36px; font-weight: bold; color: #2ecc71; margin: 10px 0; }
+        .btn {
+            background-color: #2481cc;
+            color: #ffffff;
+            border: none;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 8px;
+            transition: 0.2s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .task-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 8px;
+            text-align: left;
+        }
+        .task-btn {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>👋 <span id="user-name">User</span></h2>
+        <div class="balance-title">আপনার বর্তমান ব্যালেন্স</div>
+        <div class="balance-amount"><span id="balance">0.00</span> Taka</div>
+    </div>
+
+    <div class="card">
+        <h3>📢 দৈনিক টাস্ক (Task)</h3>
+        <div class="task-item">
+            <div>
+                <strong>চ্যানেলে ডেইলি ভিজিট</strong><br>
+                <small>পুরস্কার: ২.০০ Taka</small>
+            </div>
+            <button class="task-btn" onclick="completeTask(<?php echo $referBonus; ?>)">Claim</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>👥 রেফার ও আয় (Refer & Earn)</h3>
+        <p><small>প্রতি রেফারেল বোনাস <strong><?php echo $referBonus; ?>.০০ Taka</strong><br>সর্বনিম্ন উইথড্র <strong><?php echo $minWithdraw; ?>.০০ Taka</strong></small></p>
+        <button class="btn" onclick="copyReferLink()">রেফার লিঙ্ক কপি করুন</button>
+    </div>
+
+    <div class="card">
+        <h3>💸 উইথড্র (Withdraw)</h3>
+        <button class="btn" style="background-color: #e67e22;" onclick="withdraw()">টাকা তুলুন</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        let userId = tg.initDataUnsafe?.user?.id || "guest";
+        let userName = tg.initDataUnsafe?.user?.first_name || "ইউজার";
+        document.getElementById('user-name').innerText = userName;
+
+        let balance = parseFloat(localStorage.getItem('user_taka_' + userId)) || 0.00;
+        document.getElementById('balance').innerText = balance.toFixed(2);
+
+        function completeTask(reward) {
+            balance += reward;
+            localStorage.setItem('user_taka_' + userId, balance);
+            document.getElementById('balance').innerText = balance.toFixed(2);
+            if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            alert("🎉 টাস্ক সফল হয়েছে! " + reward.toFixed(2) + " Taka যোগ করা হয়েছে।");
+        }
+
+        function copyReferLink() {
+            let botUsername = "YOUR_BOT_USERNAME"; // @ ছাড়া বটের ইউজারনেম দিন
+            let refLink = "https://t.me/" + botUsername + "?start=" + userId;
+            navigator.clipboard.writeText(refLink);
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+            alert("রেফার লিঙ্ক কপি হয়েছে:\n" + refLink);
+        }
+
+        function withdraw() {
+            const minLimit = <?php echo $minWithdraw; ?>;
+            if (balance >= minLimit) {
+                alert("আপনার উইথড্র রিকোয়েস্ট গ্রহণ করা হয়েছে! পয়েন্ট কাটিং সম্পন্ন।");
+            } else {
+                alert("আপনার পর্যাপ্ত ব্যালেন্স নেই। সর্বনিম্ন উইথড্র " + minLimit + " Taka।");
+            }
+        }
+    </script>
+</body>
+</html>
